@@ -1,84 +1,81 @@
 # Auto Move to New Workspace
 
-**Auto Move to New Workspace** is a GNOME Shell extension that automatically moves specific applications to a new, empty workspace as soon as they are opened.
+A GNOME Shell extension that automatically moves new windows of selected applications
+to a new empty workspace.
 
-Unlike the original extension which binds apps to fixed workspace numbers, this extension embraces GNOME's **dynamic workspace** philosophy. It ensures that your focused apps always get their own isolated space, automatically creating new workspaces when needed without leaving empty gaps.
+Unlike the original extension which binds apps to fixed workspace numbers, this
+extension embraces GNOME's **dynamic workspace** philosophy. It ensures that your
+focused apps always get their own isolated space, automatically creating new
+workspaces when needed without leaving empty gaps.
 
-## 🚀 Features
+## Features
 
-* **Dynamic Allocation:** Automatically detects the last available workspace. If it's empty, it uses it; if not, it creates a new one.
-* **Focus Control:** Includes a toggle option to decide whether the view follows the launched application to the new workspace or remains on the current one (background opening).
-* **Tiling Manager Compatible:** Tuned with a strategic delay to work seamlessly alongside tiling extensions like Mosaic, Forge, or Pop Shell.
-* **Smart Child Window Handling:** Detects dialogs, popups, and "Save As" windows, keeping them attached to their parent application instead of moving them away.
-* **Universal Support:** Works out-of-the-box with Native apps (apt/dnf), Flatpaks, and Snaps.
-* **Loop Protection:** Includes "vaccine" logic to prevent infinite workspace creation loops.
+- **Dynamic Allocation** – Reuses the last workspace if empty, otherwise creates a
+  new one.
+- **Focus Control** – Choose whether focus follows the app to the new workspace or
+  stays on your current one (background mode).
+- **Per-App Background Toggle** – Set individual apps to always open in the
+  background without switching workspaces.
+- **Tiling Manager Compatible** – Works alongside Mosaic, Forge, Pop Shell, etc.
+- **Smart Child Window Handling** – Dialogs and "Save As" windows stay with their
+  parent application.
+- **Loop Protection** – Prevents infinite workspace creation loops.
 
-## ⚙️ Installation
+## Installation
 
-### Manual Installation
+### Manual
 
-1.  **Clone the repository:**
-    ```bash
-    git clone [https://github.com/sobeitnow/auto-move-new-workspace.git](https://github.com/sobeitnow/auto-move-new-workspace.git)
-    ```
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/sobeitnow0/Auto-Move-to-New-Workspace.git
+   ```
 
-2.  **Move to the extensions directory:**
-    ```bash
-    mkdir -p ~/.local/share/gnome-shell/extensions
-    cp -r auto-move-new-workspace/auto-move-new-workspace@sobeitnow ~/.local/share/gnome-shell/extensions/
-    ```
+2. Copy to the extensions directory:
+   ```bash
+   mkdir -p ~/.local/share/gnome-shell/extensions
+   cp -r Auto-Move-to-New-Workspace ~/.local/share/gnome-shell/extensions/auto-move-new-workspace@sobeitnow/
+   ```
 
-3.  **Compile the Schemas (Crucial Step):**
-    Navigate to the extension folder and compile the settings schema.
-    ```bash
-    cd ~/.local/share/gnome-shell/extensions/auto-move-new-workspace@sobeitnow
-    glib-compile-schemas .
-    ```
+3. Compile the schemas:
+   ```bash
+   cd ~/.local/share/gnome-shell/extensions/auto-move-new-workspace@sobeitnow/schemas
+   glib-compile-schemas .
+   ```
 
-4.  **Restart GNOME Shell:**
-    * **Wayland Users:** Log Out and Log back in.
-    * **X11 Users:** Press `Alt` + `F2`, type `r`, and hit `Enter`.
+4. Restart GNOME Shell:
+   - **X11:** Press `Alt`+`F2`, type `r`, press `Enter`
+   - **Wayland:** Log out and log back in
 
-5.  **Enable the extension:**
-    ```bash
-    gnome-extensions enable auto-move-new-workspace@sobeitnow
-    ```
+5. Enable the extension:
+   ```bash
+   gnome-extensions enable auto-move-new-workspace@sobeitnow
+   ```
 
-## 🛠 Configuration & Usage
+## Usage
 
-### Basic Usage
-1.  Open the **Extensions** app (or run `gnome-extensions prefs auto-move-new-workspace@sobeitnow`).
-2.  Click "Add App".
-3.  Select the application you want to isolate (e.g., Firefox, VS Code, Spotify).
+1. Open the **Extensions** app → **Auto Move to New Workspace** → ⚙.
+2. Click **+** to add applications.
+3. Toggle the switch next to each app for **background mode** (stays on current
+   workspace).
+4. The top toggle controls whether focus automatically follows to the new workspace.
 
-### Handling Flatpaks and Snaps
-The extension automatically detects installed Flatpaks and Snaps. Just select them from the list.
+### How it works
 
----
+When you open a configured application and it's the **only** instance on your
+current workspace, the extension:
+1. Checks if the last workspace is empty (reuses it) or creates a new one.
+2. Moves the window there.
+3. Either switches focus or keeps you where you are (configurable).
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
-### App opens in a "Login" window (e.g., Ferdium)
-If an app opens a helper window first and isn't detected:
-1.  Open the app and use GNOME Looking Glass (`Alt`+`F2`, type `lg`) to find the real `wmclass`.
-2.  Use **Dconf Editor** to manually add the ID to `/org/gnome/shell/extensions/auto-move-new-workspace/application-list`.
+If an app isn't detected (e.g., it opens a login helper window first), use GNOME
+Looking Glass (`Alt`+`F2`, type `lg`) to find the real `wmclass` and add it
+manually via dconf:
+```
+/org/gnome/shell/extensions/auto-move-new-workspace/application-list
+```
 
----
+## License
 
-## 🧠 Technical Architecture
-
-### Compatibility Strategy (`timeout_add`)
-We use a `GLib.timeout_add` strategy with a slight delay (100ms). This prevents race conditions with the window compositor and ensures compatibility with Tiling Window Managers like **Mosaic**.
-
-### Infinite Loop Prevention (`WeakSet`)
-We implement a `WeakSet` named `_processedWindows` to "vaccinate" windows once they are handled, preventing recursive workspace creation loops.
-
-### Child Window Detection
-To ensure a cohesive workflow, the extension checks window properties before moving:
-1.  **Transient Check:** Uses `window.get_transient_for()` to see if the window belongs to a parent.
-2.  **Type Check:** Verifies `window.get_window_type()` to ignore `DIALOG`, `UTILITY`, or `MODAL` windows.
-
-## 👏 Acknowledgements
-
-Based on the **Auto Move Windows** extension from the official [GNOME Shell Extensions](https://gitlab.gnome.org/GNOME/gnome-shell-extensions) collection.
-Distributed under the **GPL-2.0-or-later** license.
+GNU General Public License v2.0 or later (GPL-2.0-or-later).

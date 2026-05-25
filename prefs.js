@@ -49,7 +49,6 @@ class RulesList extends GObject.Object {
 
     append(appInfo) {
         const pos = this.#rules.length;
-        // Padrão: background = false (focar na janela)
         this.#rules.push(new Rule({appInfo, workspace: 1, background: false}));
         this.#saveRules();
         this.items_changed(pos, 0, 1);
@@ -63,7 +62,6 @@ class RulesList extends GObject.Object {
         this.items_changed(pos, 1, 0);
     }
 
-    // Atualiza quando o usuário clica no Switch
     toggleBackground(id, isBackground) {
         const pos = this.#rules.findIndex(r => r.appInfo.get_id() === id);
         if (pos < 0) return;
@@ -73,8 +71,7 @@ class RulesList extends GObject.Object {
 
     #saveRules() {
         this.#settings.block_signal_handler(this.#changedId);
-        // Salvamos no formato: "appid:workspace:background"
-        this.#settings.set_strv(SETTINGS_KEY, this.#rules.map(r => 
+        this.#settings.set_strv(SETTINGS_KEY, this.#rules.map(r =>
             `${r.app_info.get_id()}:${r.workspace}:${r.background}`
         ));
         this.#settings.unblock_signal_handler(this.#changedId);
@@ -84,12 +81,10 @@ class RulesList extends GObject.Object {
         const removed = this.#rules.length;
         this.#rules = [];
         for (const stringRule of this.#settings.get_strv(SETTINGS_KEY)) {
-            // Lemos o formato novo (com 3 partes)
             const [id, workspace, bgString] = stringRule.split(':');
             const appInfo = GioUnix.DesktopAppInfo.new(id);
-            // Se bgString for 'true', ativa o modo background. Se não existir (versão antiga), é false.
             const background = (bgString === 'true');
-            
+
             if (appInfo) this.#rules.push(new Rule({appInfo, workspace, background}));
         }
         this.items_changed(0, removed, this.#rules.length);
@@ -206,21 +201,47 @@ class NewRuleDialog extends Gtk.AppChooserDialog {
     }
 }
 
+class FocusToggle extends Adw.ActionRow {
+    static { GObject.registerClass(this); }
+    constructor(settings) {
+        super({
+            title: _('Focar no novo workspace'),
+            subtitle: _('Ao abrir um app, mudar automaticamente para o workspace onde ele foi movido.'),
+        });
+        this._settings = settings;
+        const toggle = new Gtk.Switch({
+            active: this._settings.get_boolean('focus-new-workspace'),
+            valign: Gtk.Align.CENTER,
+        });
+        toggle.connect('notify::active', () => {
+            this._settings.set_boolean('focus-new-workspace', toggle.active);
+        });
+        this._settings.connect(`changed::focus-new-workspace`, () => {
+            toggle.active = this._settings.get_boolean('focus-new-workspace');
+        });
+        this.add_suffix(toggle);
+        this.set_activatable_widget(toggle);
+    }
+}
+
 export default class AutoMovePrefs extends ExtensionPreferences {
-    fillPreferencesWindow(window) {
-        let settings;
+    _getSettingsSafe() {
         try {
-            settings = this.getSettings();
+            return this.getSettings();
         } catch (e) {
-            const schemaId = 'org.gnome.shell.extensions.auto-move-new-workspace';
             const schemaSource = Gio.SettingsSchemaSource.new_from_directory(
                 this.path, Gio.SettingsSchemaSource.get_default(), false);
-            const schema = schemaSource.lookup(schemaId, true);
-            if (!schema) throw new Error(`Schema ${schemaId} not found`);
-            settings = new Gio.Settings({ settings_schema: schema });
+            const schema = schemaSource.lookup(this.metadata['settings-schema'], true);
+            if (!schema) throw new Error(`Schema not found`);
+            return new Gio.Settings({ settings_schema: schema });
         }
+    }
+
+    fillPreferencesWindow(window) {
+        const settings = this._getSettingsSafe();
 
         const page = new Adw.PreferencesPage();
+        page.add(new FocusToggle(settings));
         const group = new AutoMoveSettingsWidget(settings);
         page.add(group);
         window.add(page);

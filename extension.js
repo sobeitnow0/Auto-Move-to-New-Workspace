@@ -229,7 +229,6 @@ export default class AutoMoveExtension extends Extension {
             );
             const schema = schemaSource.lookup(schemaId, true);
             if (!schema) {
-                // Fail gracefully instead of crashing
                 console.error(`[AutoMove] Schema ${schemaId} not found`);
                 return null;
             }
