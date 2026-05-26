@@ -14,7 +14,7 @@ class WindowMover {
         this._appConfigs = new Map();
         this._appData = new Map();
         this._processedWindows = new WeakSet();
-        this._timeouts = new Set(); // Rastreia timers para limpeza segura
+        this._timeouts = new Set();
 
         this._appSystem.connectObject('installed-changed',
             () => this._safeUpdateAppData(), this);
@@ -29,7 +29,7 @@ class WindowMover {
         try {
             this._updateAppConfigs();
         } catch (e) {
-            console.error('[AutoMove] Error updating configs:', e);
+            logError(e, '[AutoMove] Error updating configs');
         }
     }
 
@@ -37,7 +37,7 @@ class WindowMover {
         try {
             this._updateAppData();
         } catch (e) {
-            console.error('[AutoMove] Error updating app data:', e);
+            logError(e, '[AutoMove] Error updating app data');
         }
     }
 
@@ -78,7 +78,7 @@ class WindowMover {
                     try {
                         this._appWindowsChanged(a);
                     } catch (e) {
-                        console.error('[AutoMove] Error in windows-changed:', e);
+                        logError(e, '[AutoMove] Error in windows-changed');
                     }
                 }, this);
             this._appData.set(app, { windows: app.get_windows() });
@@ -86,19 +86,22 @@ class WindowMover {
     }
 
     destroy() {
-        // Limpa todos os timers pendentes para evitar crash
         this._timeouts.forEach(id => GLib.source_remove(id));
         this._timeouts.clear();
 
-        this._appSystem.disconnectObject(this);
+        if (this._appSystem) {
+            this._appSystem.disconnectObject(this);
+            this._appSystem = null;
+        }
         if (this._settings) {
             this._settings.disconnectObject(this);
+            this._settings = null;
         }
-        this._settings = null;
         this._appConfigs.clear();
-        
-        // Desconecta sinais dos apps
-        [...this._appData.keys()].forEach(app => app.disconnectObject(this));
+
+        for (const app of this._appData.keys()) {
+            app.disconnectObject(this);
+        }
         this._appData.clear();
     }
 
@@ -121,7 +124,7 @@ class WindowMover {
                 return;
             }
         } catch (e) {
-            console.warn('[AutoMove] Failed to handle modal window:', e);
+            logError(e, '[AutoMove] Failed to handle modal window');
             return;
         }
 
@@ -191,7 +194,7 @@ class WindowMover {
                     }
                 }
             } catch (err) {
-                console.error('[AutoMove] Error moving window:', err);
+                logError(err, '[AutoMove] Error moving window');
             }
 
             return GLib.SOURCE_REMOVE;
@@ -229,7 +232,7 @@ export default class AutoMoveExtension extends Extension {
             );
             const schema = schemaSource.lookup(schemaId, true);
             if (!schema) {
-                console.error(`[AutoMove] Schema ${schemaId} not found`);
+                log(`[AutoMove] Schema ${schemaId} not found`);
                 return null;
             }
             return new Gio.Settings({ settings_schema: schema });
