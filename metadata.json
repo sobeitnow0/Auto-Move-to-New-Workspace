@@ -1,6 +1,6 @@
 {
   "name": "Auto Move to New Workspace",
-  "description": "Abre os aplicativos selecionados automaticamente em um novo workspace vazio.",
+  "description": "Automatically opens selected applications in a new empty workspace.",
   "uuid": "auto-move-new-workspace@sobeitnow",
   "shell-version": [ "45", "46", "47", "48", "49", "50" ],
   "settings-schema": "org.gnome.shell.extensions.auto-move-new-workspace",

@@ -130,7 +130,7 @@ class AutoMoveSettingsWidget extends Adw.PreferencesGroup {
     _addNewRule() {
         const dialog = new NewRuleDialog(this.get_root(), this._settings);
         dialog.connect('response', (dlg, id) => {
-            const appInfo = id === Gtk.ResponseType.OK ? dialog.get_widget().get_app_info() : null;
+            const appInfo = id === Gtk.ResponseType.OK ? dialog.get_app_info() : null;
             if (appInfo) this._rules.append(appInfo);
             dialog.destroy();
         });
@@ -185,19 +185,122 @@ class NewRuleRow extends Gtk.ListBoxRow {
     }
 }
 
-class NewRuleDialog extends Gtk.AppChooserDialog {
+class NewRuleDialog extends Gtk.Dialog {
     static { GObject.registerClass(this); }
     constructor(parent, settings) {
-        super({ transient_for: parent, modal: true });
+        super({
+            transient_for: parent,
+            modal: true,
+            title: _('Select Application'),
+            use_header_bar: 1,
+            default_width: 400,
+            default_height: 500,
+        });
+
         this._settings = settings;
-        this.get_widget().set({ show_all: true, show_other: true });
-        this.get_widget().connect('application-selected', this._updateSensitivity.bind(this));
-        this._updateSensitivity();
-    }
-    _updateSensitivity() {
+        this._selectedApp = null;
+
+        this.add_button(_('Cancel'), Gtk.ResponseType.CANCEL);
+        const addButton = this.add_button(_('Add'), Gtk.ResponseType.OK);
+        addButton.add_css_class('suggested-action');
+        this.set_response_sensitive(Gtk.ResponseType.OK, false);
+
+        const contentArea = this.get_content_area();
+        contentArea.set_margin_top(12);
+        contentArea.set_margin_bottom(12);
+        contentArea.set_margin_start(12);
+        contentArea.set_margin_end(12);
+        contentArea.set_spacing(12);
+
+        const searchEntry = new Gtk.SearchEntry({
+            placeholder_text: _('Search applications...'),
+        });
+        contentArea.append(searchEntry);
+
+        const scrolled = new Gtk.ScrolledWindow({
+            vexpand: true,
+            hexpand: true,
+            propagate_natural_height: true,
+            hscrollbar_policy: Gtk.PolicyType.NEVER,
+            vscrollbar_policy: Gtk.PolicyType.AUTOMATIC,
+        });
+        contentArea.append(scrolled);
+
+        this._listBox = new Gtk.ListBox({
+            selection_mode: Gtk.SelectionMode.SINGLE,
+            css_classes: ['boxed-list'],
+        });
+        scrolled.set_child(this._listBox);
+
         const rules = this._settings.get_strv(SETTINGS_KEY);
-        const appInfo = this.get_widget().get_app_info();
-        this.set_response_sensitive(Gtk.ResponseType.OK, appInfo && !rules.some(i => i.startsWith(appInfo.get_id())));
+        const alreadyAddedIds = rules.map(rule => rule.split(':')[0]);
+
+        const allApps = Gio.AppInfo.get_all().filter(app => {
+            return app && app.should_show() && !alreadyAddedIds.includes(app.get_id());
+        });
+        allApps.sort((a, b) => a.get_display_name().localeCompare(b.get_display_name()));
+
+        this._appRows = [];
+
+        for (const app of allApps) {
+            const row = new Adw.ActionRow({
+                title: app.get_display_name(),
+                subtitle: app.get_description() || '',
+                activatable: true,
+            });
+
+            const appIcon = app.get_icon();
+            if (appIcon) {
+                const icon = new Gtk.Image({
+                    gicon: appIcon,
+                    pixel_size: 32,
+                    css_classes: ['icon-dropshadow'],
+                });
+                row.add_prefix(icon);
+            }
+
+            this._listBox.append(row);
+            this._appRows.push({ row, app });
+        }
+
+        this._listBox.connect('row-activated', (listbox, row) => {
+            const match = this._appRows.find(item => item.row === row);
+            if (match) {
+                this._selectedApp = match.app;
+                this.set_response_sensitive(Gtk.ResponseType.OK, true);
+                this.response(Gtk.ResponseType.OK);
+            }
+        });
+
+        this._listBox.connect('row-selected', (listbox, row) => {
+            if (row) {
+                const match = this._appRows.find(item => item.row === row);
+                if (match) {
+                    this._selectedApp = match.app;
+                    this.set_response_sensitive(Gtk.ResponseType.OK, true);
+                }
+            } else {
+                this._selectedApp = null;
+                this.set_response_sensitive(Gtk.ResponseType.OK, false);
+            }
+        });
+
+        searchEntry.connect('search-changed', () => {
+            const text = searchEntry.get_text().toLowerCase();
+            this._listBox.set_filter_func(row => {
+                const match = this._appRows.find(item => item.row === row);
+                if (!match) return false;
+                if (!text) return true;
+                const name = match.app.get_display_name().toLowerCase();
+                const id = match.app.get_id().toLowerCase();
+                const desc = (match.app.get_description() || '').toLowerCase();
+                return name.includes(text) || id.includes(text) || desc.includes(text);
+            });
+        });
+    }
+
+    get_app_info() {
+        return this._selectedApp;
     }
 }
 
@@ -205,8 +308,8 @@ class FocusToggle extends Adw.ActionRow {
     static { GObject.registerClass(this); }
     constructor(settings) {
         super({
-            title: _('Focar no novo workspace'),
-            subtitle: _('Ao abrir um app, mudar automaticamente para o workspace onde ele foi movido.'),
+            title: _('Focus on New Workspace'),
+            subtitle: _('Automatically switch to the new workspace when an application is opened.'),
         });
         this._settings = settings;
         const toggle = new Gtk.Switch({
@@ -241,7 +344,14 @@ export default class AutoMovePrefs extends ExtensionPreferences {
         const settings = this._getSettingsSafe();
 
         const page = new Adw.PreferencesPage();
-        page.add(new FocusToggle(settings));
+        
+        // Wrap the FocusToggle ActionRow in a General Settings PreferencesGroup
+        const generalGroup = new Adw.PreferencesGroup({
+            title: _('General Settings'),
+        });
+        generalGroup.add(new FocusToggle(settings));
+        page.add(generalGroup);
+
         const group = new AutoMoveSettingsWidget(settings);
         page.add(group);
         window.add(page);
