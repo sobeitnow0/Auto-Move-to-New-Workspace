@@ -1,0 +1,89 @@
+# Auto Move to New Workspace POT template.
+# Copyright (C) 2026 sobeitnow0
+# This file is distributed under the same license as the auto-move-new-workspace package.
+#
+#, fuzzy
+msgid ""
+msgstr ""
+"Project-Id-Version: auto-move-new-workspace\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-23 15:45-0300\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"Language: \n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: prefs.js
+msgid "Focus on New Workspace"
+msgstr ""
+
+#: prefs.js
+msgid "Automatically switch focus to the new workspace when an application opens."
+msgstr ""
+
+#: prefs.js
+msgid "Ignore If Current Workspace Is Empty"
+msgstr ""
+
+#: prefs.js
+msgid "Keep the application on the current workspace if it has no other windows."
+msgstr ""
+
+#: prefs.js
+msgid "General Settings"
+msgstr ""
+
+#: prefs.js
+msgid "Application Rules"
+msgstr ""
+
+#: prefs.js
+msgid "Manage applications configured to open in a new empty workspace."
+msgstr ""
+
+#: prefs.js
+msgid "Add application rule"
+msgstr ""
+
+#: prefs.js
+msgid "Open in background without switching workspace"
+msgstr ""
+
+#: prefs.js
+msgid "Automatically maximize on new workspace"
+msgstr ""
+
+#: prefs.js
+msgid "Remove rule"
+msgstr ""
+
+#: prefs.js
+msgid "Add Application Rule"
+msgstr ""
+
+#: prefs.js
+msgid "Search applications..."
+msgstr ""
+
+#: prefs.js
+msgid "Custom WM_CLASS or App ID"
+msgstr ""
+
+#: prefs.js
+msgid "For Flatpaks, Steam games, or apps not listed below"
+msgstr ""
+
+#: prefs.js
+msgid "WM_CLASS or App ID"
+msgstr ""
+
+#: prefs.js
+msgid "Add custom rule"
+msgstr ""
+
+#: prefs.js
+msgid "Installed Applications"
+msgstr ""

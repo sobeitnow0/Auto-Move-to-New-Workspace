@@ -5,13 +5,19 @@
     <key name="application-list" type="as">
       <default>[ ]</default>
       <summary>Application list</summary>
-      <description>Lista de IDs de aplicativos.</description>
+      <description>List of application desktop file IDs or WM_CLASS rules.</description>
     </key>
 
     <key name="focus-new-workspace" type="b">
       <default>false</default>
-      <summary>Focar no novo desktop</summary>
-      <description>Se true, a tela muda para o novo desktop. Se false, você continua onde está.</description>
+      <summary>Focus new workspace</summary>
+      <description>If true, switch focus to the new workspace when moving a window. If false, keep focus on the current workspace.</description>
+    </key>
+
+    <key name="ignore-empty-workspace" type="b">
+      <default>true</default>
+      <summary>Ignore if current workspace is empty</summary>
+      <description>If true, keeps the application on the current workspace if it contains no other windows.</description>
     </key>
 
   </schema>

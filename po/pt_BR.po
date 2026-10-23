@@ -1,0 +1,88 @@
+# Brazilian Portuguese translation for auto-move-new-workspace.
+# Copyright (C) 2026 sobeitnow0
+# This file is distributed under the same license as the auto-move-new-workspace package.
+#
+msgid ""
+msgstr ""
+"Project-Id-Version: auto-move-new-workspace\n"
+"Report-Msgid-Bugs-To: \n"
+"POT-Creation-Date: 2026-10-23 15:45-0300\n"
+"PO-Revision-Date: 2026-10-23 15:45-0300\n"
+"Last-Translator: sobeitnow0\n"
+"Language-Team: Brazilian Portuguese <gnome-pt_br-list@gnome.org>\n"
+"Language: pt_BR\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+
+#: prefs.js
+msgid "Focus on New Workspace"
+msgstr "Focar no novo workspace"
+
+#: prefs.js
+msgid "Automatically switch focus to the new workspace when an application opens."
+msgstr "Mudar automaticamente o foco para o novo workspace ao abrir um aplicativo."
+
+#: prefs.js
+msgid "Ignore If Current Workspace Is Empty"
+msgstr "Ignorar se o workspace atual já estiver vazio"
+
+#: prefs.js
+msgid "Keep the application on the current workspace if it has no other windows."
+msgstr "Manter o aplicativo no workspace atual se este não possuir outras janelas."
+
+#: prefs.js
+msgid "General Settings"
+msgstr "Configurações gerais"
+
+#: prefs.js
+msgid "Application Rules"
+msgstr "Regras de aplicativos"
+
+#: prefs.js
+msgid "Manage applications configured to open in a new empty workspace."
+msgstr "Gerencie os aplicativos configurados para abrir em um novo workspace vazio."
+
+#: prefs.js
+msgid "Add application rule"
+msgstr "Adicionar regra de aplicativo"
+
+#: prefs.js
+msgid "Open in background without switching workspace"
+msgstr "Abrir em segundo plano sem trocar de workspace"
+
+#: prefs.js
+msgid "Automatically maximize on new workspace"
+msgstr "Maximizar automaticamente no novo workspace"
+
+#: prefs.js
+msgid "Remove rule"
+msgstr "Remover regra"
+
+#: prefs.js
+msgid "Add Application Rule"
+msgstr "Adicionar regra de aplicativo"
+
+#: prefs.js
+msgid "Search applications..."
+msgstr "Pesquisar aplicativos..."
+
+#: prefs.js
+msgid "Custom WM_CLASS or App ID"
+msgstr "WM_CLASS ou App ID personalizado"
+
+#: prefs.js
+msgid "For Flatpaks, Steam games, or apps not listed below"
+msgstr "Para Flatpaks, jogos Steam ou apps não listados abaixo"
+
+#: prefs.js
+msgid "WM_CLASS or App ID"
+msgstr "WM_CLASS ou App ID"
+
+#: prefs.js
+msgid "Add custom rule"
+msgstr "Adicionar regra personalizada"
+
+#: prefs.js
+msgid "Installed Applications"
+msgstr "Aplicativos instalados"

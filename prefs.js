@@ -2,35 +2,23 @@
 
 import Adw from 'gi://Adw';
 import Gio from 'gi://Gio';
-import GioUnix from 'gi://GioUnix';
 import GLib from 'gi://GLib';
 import GObject from 'gi://GObject';
 import Gtk from 'gi://Gtk';
 
-import {ExtensionPreferences, gettext as _} from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
+import { ExtensionPreferences, gettext as _ } from 'resource:///org/gnome/Shell/Extensions/js/extensions/prefs.js';
 
 const SETTINGS_KEY = 'application-list';
-// O workspace não é usado na lógica dinâmica, mas mantemos para compatibilidade do formato
-const WORKSPACE_MAX = 36; 
-
-class NewItem extends GObject.Object {}
-GObject.registerClass(NewItem);
-
-class NewItemModel extends GObject.Object {
-    static [GObject.interfaces] = [Gio.ListModel];
-    static { GObject.registerClass(this); }
-    #item = new NewItem();
-    vfunc_get_item_type() { return NewItem; }
-    vfunc_get_n_items() { return 1; }
-    vfunc_get_item(_pos) { return this.#item; }
-}
+const WORKSPACE_MAX = 36;
 
 class Rule extends GObject.Object {
     static [GObject.properties] = {
-        'app-info': GObject.ParamSpec.object('app-info', null, null, GObject.ParamFlags.READWRITE, GioUnix.DesktopAppInfo),
+        'id': GObject.ParamSpec.string('id', null, null, GObject.ParamFlags.READWRITE, ''),
+        'display-name': GObject.ParamSpec.string('display-name', null, null, GObject.ParamFlags.READWRITE, ''),
+        'app-info': GObject.ParamSpec.object('app-info', null, null, GObject.ParamFlags.READWRITE, Gio.AppInfo),
         'workspace': GObject.ParamSpec.uint('workspace', null, null, GObject.ParamFlags.READWRITE, 1, WORKSPACE_MAX, 1),
-        // Nova propriedade: Rodar em segundo plano?
         'background': GObject.ParamSpec.boolean('background', null, null, GObject.ParamFlags.READWRITE, false),
+        'auto-maximize': GObject.ParamSpec.boolean('auto-maximize', null, null, GObject.ParamFlags.READWRITE, false),
     };
     static { GObject.registerClass(this); }
 }
@@ -38,24 +26,39 @@ class Rule extends GObject.Object {
 class RulesList extends GObject.Object {
     static [GObject.interfaces] = [Gio.ListModel];
     static { GObject.registerClass(this); }
-    #settings; #rules = []; #changedId;
+
+    #settings;
+    #rules = [];
+    #changedId;
 
     constructor(settings) {
         super();
         this.#settings = settings;
-        this.#changedId = this.#settings.connect(`changed::${SETTINGS_KEY}`, () => this.#sync());
+        this.#changedId = this.#settings.connectObject(`changed::${SETTINGS_KEY}`, () => this.#sync(), this);
         this.#sync();
     }
 
-    append(appInfo) {
+    append(id, appInfo = null) {
+        if (!id || this.#rules.some(r => r.id === id)) return;
+
+        const displayName = appInfo ? appInfo.get_display_name() : id;
         const pos = this.#rules.length;
-        this.#rules.push(new Rule({appInfo, workspace: 1, background: false}));
+
+        this.#rules.push(new Rule({
+            id,
+            displayName,
+            appInfo,
+            workspace: 1,
+            background: false,
+            autoMaximize: false,
+        }));
+
         this.#saveRules();
         this.items_changed(pos, 0, 1);
     }
 
     remove(id) {
-        const pos = this.#rules.findIndex(r => r.appInfo.get_id() === id);
+        const pos = this.#rules.findIndex(r => r.id === id);
         if (pos < 0) return;
         this.#rules.splice(pos, 1);
         this.#saveRules();
@@ -63,16 +66,23 @@ class RulesList extends GObject.Object {
     }
 
     toggleBackground(id, isBackground) {
-        const pos = this.#rules.findIndex(r => r.appInfo.get_id() === id);
-        if (pos < 0) return;
-        this.#rules[pos].set({background: isBackground});
+        const rule = this.#rules.find(r => r.id === id);
+        if (!rule) return;
+        rule.background = isBackground;
+        this.#saveRules();
+    }
+
+    toggleAutoMaximize(id, isAutoMaximize) {
+        const rule = this.#rules.find(r => r.id === id);
+        if (!rule) return;
+        rule.autoMaximize = isAutoMaximize;
         this.#saveRules();
     }
 
     #saveRules() {
         this.#settings.block_signal_handler(this.#changedId);
         this.#settings.set_strv(SETTINGS_KEY, this.#rules.map(r =>
-            `${r.app_info.get_id()}:${r.workspace}:${r.background}`
+            `${r.id}:${r.workspace}:${r.background}:${r.autoMaximize}`
         ));
         this.#settings.unblock_signal_handler(this.#changedId);
     }
@@ -80,13 +90,38 @@ class RulesList extends GObject.Object {
     #sync() {
         const removed = this.#rules.length;
         this.#rules = [];
-        for (const stringRule of this.#settings.get_strv(SETTINGS_KEY)) {
-            const [id, workspace, bgString] = stringRule.split(':');
-            const appInfo = GioUnix.DesktopAppInfo.new(id);
-            const background = (bgString === 'true');
 
-            if (appInfo) this.#rules.push(new Rule({appInfo, workspace, background}));
+        for (const stringRule of this.#settings.get_strv(SETTINGS_KEY)) {
+            if (!stringRule || !stringRule.trim()) continue;
+            const parts = stringRule.split(':');
+            const id = parts[0]?.trim();
+            if (!id) continue;
+
+            const workspace = parseInt(parts[1], 10) || 1;
+            const background = parts[2] === 'true';
+            const autoMaximize = parts[3] === 'true';
+
+            let appInfo = null;
+            try {
+                if (Gio.DesktopAppInfo) {
+                    appInfo = Gio.DesktopAppInfo.new(id);
+                }
+            } catch (e) {
+                appInfo = null;
+            }
+
+            const displayName = appInfo ? appInfo.get_display_name() : id;
+
+            this.#rules.push(new Rule({
+                id,
+                displayName,
+                appInfo,
+                workspace,
+                background,
+                autoMaximize,
+            }));
         }
+
         this.items_changed(0, removed, this.#rules.length);
     }
 
@@ -95,155 +130,314 @@ class RulesList extends GObject.Object {
     vfunc_get_item(pos) { return this.#rules[pos] ?? null; }
 }
 
-class AutoMoveSettingsWidget extends Adw.PreferencesGroup {
-    static { GObject.registerClass(this); }
-
-    constructor(settings) {
-        super({
-            title: _('Application List'),
-            description: _('Adicione apps. Ative a chave lateral para mover em 2º plano (sem trocar de tela).'),
-        });
-        this._settings = settings;
-        this._rules = new RulesList(this._settings);
-
-        const actionGroup = new Gio.SimpleActionGroup();
-        this.insert_action_group('rules', actionGroup);
-
-        const addAction = new Gio.SimpleAction({ name: 'add' });
-        addAction.connect('activate', () => this._addNewRule());
-        actionGroup.add_action(addAction);
-
-        const removeAction = new Gio.SimpleAction({ name: 'remove', parameter_type: new GLib.VariantType('s') });
-        removeAction.connect('activate', (_, param) => { this._rules.remove(param.unpack()); });
-        actionGroup.add_action(removeAction);
-
-        const store = new Gio.ListStore({item_type: Gio.ListModel});
-        const listModel = new Gtk.FlattenListModel({model: store});
-        store.append(this._rules);
-        store.append(new NewItemModel());
-
-        this._list = new Gtk.ListBox({ selection_mode: Gtk.SelectionMode.NONE, css_classes: ['boxed-list'] });
-        this.add(this._list);
-        this._list.bind_model(listModel, item => item instanceof NewItem ? new NewRuleRow() : new RuleRow(item, this._rules));
-    }
-
-    _addNewRule() {
-        const dialog = new NewRuleDialog(this.get_root(), this._settings);
-        dialog.connect('response', (dlg, id) => {
-            const appInfo = id === Gtk.ResponseType.OK ? dialog.get_widget().get_app_info() : null;
-            if (appInfo) this._rules.append(appInfo);
-            dialog.destroy();
-        });
-        dialog.show();
-    }
-}
-
 class RuleRow extends Adw.ActionRow {
     static { GObject.registerClass(this); }
-    constructor(rule, rulesList) {
-        const {appInfo, background} = rule;
-        const id = appInfo.get_id();
-        super({ activatable: false, title: rule.appInfo.get_display_name() });
-        
-        const icon = new Gtk.Image({ css_classes: ['icon-dropshadow'], gicon: appInfo.get_icon(), pixel_size: 32 });
-        this.add_prefix(icon);
 
-        // --- Switch para Segundo Plano ---
+    constructor(rule, rulesList) {
+        super({
+            activatable: false,
+            title: rule.displayName,
+            subtitle: rule.id !== rule.displayName ? rule.id : '',
+        });
+
+        const iconBox = new Gtk.Image({
+            pixel_size: 32,
+            css_classes: ['icon-dropshadow'],
+        });
+
+        if (rule.appInfo && rule.appInfo.get_icon()) {
+            iconBox.set_from_gicon(rule.appInfo.get_icon());
+        } else {
+            iconBox.set_from_icon_name('application-x-executable-symbolic');
+        }
+        this.add_prefix(iconBox);
+
+        // Control box for options
+        const controlsBox = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 12,
+            valign: Gtk.Align.CENTER,
+        });
+
+        // Background mode switch
+        const bgBox = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 6,
+            valign: Gtk.Align.CENTER,
+            tooltip_text: _('Open in background without switching workspace'),
+        });
+        const bgIcon = new Gtk.Image({ icon_name: 'view-conceal-symbolic' });
         const bgSwitch = new Gtk.Switch({
             valign: Gtk.Align.CENTER,
-            active: background,
-            tooltip_text: _("Mover em segundo plano (não mudar de workspace)")
+            active: rule.background,
         });
-        
         bgSwitch.connect('notify::active', () => {
-             rulesList.toggleBackground(id, bgSwitch.active);
+            rulesList.toggleBackground(rule.id, bgSwitch.active);
         });
-        
-        // Adiciona o switch antes do botão de deletar
-        this.add_suffix(bgSwitch);
-        // ---------------------------------
+        bgBox.append(bgIcon);
+        bgBox.append(bgSwitch);
+        controlsBox.append(bgBox);
 
-        const button = new Gtk.Button({
-            action_name: 'rules.remove',
-            action_target: new GLib.Variant('s', id),
-            icon_name: 'edit-delete-symbolic',
+        // Auto-maximize switch
+        const maxBox = new Gtk.Box({
+            orientation: Gtk.Orientation.HORIZONTAL,
+            spacing: 6,
+            valign: Gtk.Align.CENTER,
+            tooltip_text: _('Automatically maximize on new workspace'),
+        });
+        const maxIcon = new Gtk.Image({ icon_name: 'window-maximize-symbolic' });
+        const maxSwitch = new Gtk.Switch({
+            valign: Gtk.Align.CENTER,
+            active: rule.autoMaximize,
+        });
+        maxSwitch.connect('notify::active', () => {
+            rulesList.toggleAutoMaximize(rule.id, maxSwitch.active);
+        });
+        maxBox.append(maxIcon);
+        maxBox.append(maxSwitch);
+        controlsBox.append(maxBox);
+
+        // Delete button
+        const removeButton = new Gtk.Button({
+            icon_name: 'user-trash-symbolic',
             has_frame: false,
             valign: Gtk.Align.CENTER,
+            tooltip_text: _('Remove rule'),
+            css_classes: ['flat', 'destructive-action'],
         });
-        this.add_suffix(button);
+        removeButton.connect('clicked', () => {
+            rulesList.remove(rule.id);
+        });
+        controlsBox.append(removeButton);
+
+        this.add_suffix(controlsBox);
     }
 }
 
-class NewRuleRow extends Gtk.ListBoxRow {
-    static { GObject.registerClass(this); }
-    constructor() {
-        super({
-            action_name: 'rules.add',
-            child: new Gtk.Image({ icon_name: 'list-add-symbolic', pixel_size: 16, margin_top: 12, margin_bottom: 12, margin_start: 12, margin_end: 12 }),
-        });
-        this.update_property([Gtk.AccessibleProperty.LABEL], [_('Add Rule')]);
-    }
-}
+class AddRuleDialog {
+    constructor(parent, rulesList) {
+        this._parent = parent;
+        this._rulesList = rulesList;
 
-class NewRuleDialog extends Gtk.AppChooserDialog {
-    static { GObject.registerClass(this); }
-    constructor(parent, settings) {
-        super({ transient_for: parent, modal: true });
-        this._settings = settings;
-        this.get_widget().set({ show_all: true, show_other: true });
-        this.get_widget().connect('application-selected', this._updateSensitivity.bind(this));
-        this._updateSensitivity();
-    }
-    _updateSensitivity() {
-        const rules = this._settings.get_strv(SETTINGS_KEY);
-        const appInfo = this.get_widget().get_app_info();
-        this.set_response_sensitive(Gtk.ResponseType.OK, appInfo && !rules.some(i => i.startsWith(appInfo.get_id())));
-    }
-}
+        if (Adw.Dialog) {
+            this._dialog = new Adw.Dialog({
+                title: _('Add Application Rule'),
+                content_width: 480,
+                content_height: 580,
+            });
+        } else {
+            this._dialog = new Gtk.Window({
+                transient_for: parent,
+                modal: true,
+                title: _('Add Application Rule'),
+                default_width: 480,
+                default_height: 580,
+            });
+        }
 
-class FocusToggle extends Adw.ActionRow {
-    static { GObject.registerClass(this); }
-    constructor(settings) {
-        super({
-            title: _('Focar no novo workspace'),
-            subtitle: _('Ao abrir um app, mudar automaticamente para o workspace onde ele foi movido.'),
+        const toolbarView = new Adw.ToolbarView();
+        const headerBar = new Adw.HeaderBar();
+        toolbarView.add_top_bar(headerBar);
+
+        const contentBox = new Gtk.Box({
+            orientation: Gtk.Orientation.VERTICAL,
+            spacing: 12,
+            margin_top: 12,
+            margin_bottom: 12,
+            margin_start: 12,
+            margin_end: 12,
         });
-        this._settings = settings;
-        const toggle = new Gtk.Switch({
-            active: this._settings.get_boolean('focus-new-workspace'),
+        toolbarView.set_content(contentBox);
+
+        // Search entry
+        const searchEntry = new Gtk.SearchEntry({
+            placeholder_text: _('Search applications...'),
+        });
+        contentBox.append(searchEntry);
+
+        // Custom WM_CLASS / App ID entry
+        const customGroup = new Adw.PreferencesGroup({
+            title: _('Custom WM_CLASS or App ID'),
+            description: _('For Flatpaks, Steam games, or apps not listed below'),
+        });
+
+        const customEntryRow = new Adw.EntryRow({
+            title: _('WM_CLASS or App ID'),
+        });
+        const addCustomButton = new Gtk.Button({
+            icon_name: 'list-add-symbolic',
             valign: Gtk.Align.CENTER,
+            tooltip_text: _('Add custom rule'),
+            css_classes: ['flat', 'suggested-action'],
         });
-        toggle.connect('notify::active', () => {
-            this._settings.set_boolean('focus-new-workspace', toggle.active);
+        addCustomButton.connect('clicked', () => {
+            const text = customEntryRow.get_text()?.trim();
+            if (text) {
+                this._rulesList.append(text, null);
+                this._close();
+            }
         });
-        this._settings.connect(`changed::focus-new-workspace`, () => {
-            toggle.active = this._settings.get_boolean('focus-new-workspace');
+        customEntryRow.add_suffix(addCustomButton);
+        customGroup.add(customEntryRow);
+        contentBox.append(customGroup);
+
+        // Scrolled installed apps list
+        const appsGroup = new Adw.PreferencesGroup({
+            title: _('Installed Applications'),
         });
-        this.add_suffix(toggle);
-        this.set_activatable_widget(toggle);
+        contentBox.append(appsGroup);
+
+        const scrolled = new Gtk.ScrolledWindow({
+            vexpand: true,
+            hexpand: true,
+            hscrollbar_policy: Gtk.PolicyType.NEVER,
+            vscrollbar_policy: Gtk.PolicyType.AUTOMATIC,
+        });
+        contentBox.append(scrolled);
+
+        const listBox = new Gtk.ListBox({
+            selection_mode: Gtk.SelectionMode.NONE,
+            css_classes: ['boxed-list'],
+        });
+        scrolled.set_child(listBox);
+
+        // Load installed apps
+        const existingRules = new Set();
+        for (let i = 0; i < this._rulesList.get_n_items(); i++) {
+            const r = this._rulesList.get_item(i);
+            if (r) existingRules.add(r.id);
+        }
+
+        const allApps = Gio.AppInfo.get_all().filter(app => {
+            return app && app.should_show() && !existingRules.has(app.get_id());
+        });
+        allApps.sort((a, b) => a.get_display_name().localeCompare(b.get_display_name()));
+
+        const appRows = [];
+
+        for (const app of allApps) {
+            const row = new Adw.ActionRow({
+                title: app.get_display_name(),
+                subtitle: app.get_id(),
+                activatable: true,
+            });
+
+            const icon = new Gtk.Image({
+                pixel_size: 32,
+                css_classes: ['icon-dropshadow'],
+            });
+            if (app.get_icon()) {
+                icon.set_from_gicon(app.get_icon());
+            } else {
+                icon.set_from_icon_name('application-x-executable-symbolic');
+            }
+            row.add_prefix(icon);
+
+            row.connect('activated', () => {
+                this._rulesList.append(app.get_id(), app);
+                this._close();
+            });
+
+            listBox.append(row);
+            appRows.push({ row, app });
+        }
+
+        searchEntry.connect('search-changed', () => {
+            const query = searchEntry.get_text().toLowerCase().trim();
+            for (const { row, app } of appRows) {
+                if (!query) {
+                    row.set_visible(true);
+                    continue;
+                }
+                const name = app.get_display_name().toLowerCase();
+                const id = app.get_id().toLowerCase();
+                const desc = (app.get_description() || '').toLowerCase();
+                const matches = name.includes(query) || id.includes(query) || desc.includes(query);
+                row.set_visible(matches);
+            }
+        });
+
+        if (this._dialog.set_child) {
+            this._dialog.set_child(toolbarView);
+        } else if (this._dialog.set_content) {
+            this._dialog.set_content(toolbarView);
+        }
+    }
+
+    present() {
+        if (this._dialog.present) {
+            this._dialog.present(this._parent);
+        } else {
+            this._dialog.show();
+        }
+    }
+
+    _close() {
+        if (this._dialog.close) {
+            this._dialog.close();
+        } else if (this._dialog.destroy) {
+            this._dialog.destroy();
+        }
     }
 }
 
 export default class AutoMovePrefs extends ExtensionPreferences {
-    _getSettingsSafe() {
-        try {
-            return this.getSettings();
-        } catch (e) {
-            const schemaSource = Gio.SettingsSchemaSource.new_from_directory(
-                this.path, Gio.SettingsSchemaSource.get_default(), false);
-            const schema = schemaSource.lookup(this.metadata['settings-schema'], true);
-            if (!schema) throw new Error(`Schema not found`);
-            return new Gio.Settings({ settings_schema: schema });
-        }
-    }
-
     fillPreferencesWindow(window) {
-        const settings = this._getSettingsSafe();
+        this.initTranslations();
+        const settings = this.getSettings();
 
         const page = new Adw.PreferencesPage();
-        page.add(new FocusToggle(settings));
-        const group = new AutoMoveSettingsWidget(settings);
-        page.add(group);
+
+        // General Settings Group
+        const generalGroup = new Adw.PreferencesGroup({
+            title: _('General Settings'),
+        });
+
+        // Focus Switch Row
+        const focusRow = new Adw.SwitchRow({
+            title: _('Focus on New Workspace'),
+            subtitle: _('Automatically switch focus to the new workspace when an application opens.'),
+        });
+        settings.bind('focus-new-workspace', focusRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+        generalGroup.add(focusRow);
+
+        // Ignore Empty Workspace Switch Row
+        const emptyRow = new Adw.SwitchRow({
+            title: _('Ignore If Current Workspace Is Empty'),
+            subtitle: _('Keep the application on the current workspace if it has no other windows.'),
+        });
+        settings.bind('ignore-empty-workspace', emptyRow, 'active', Gio.SettingsBindFlags.DEFAULT);
+        generalGroup.add(emptyRow);
+
+        page.add(generalGroup);
+
+        // Application Rules Group
+        const rulesList = new RulesList(settings);
+        const rulesGroup = new Adw.PreferencesGroup({
+            title: _('Application Rules'),
+            description: _('Manage applications configured to open in a new empty workspace.'),
+        });
+
+        const addHeaderButton = new Gtk.Button({
+            icon_name: 'list-add-symbolic',
+            tooltip_text: _('Add application rule'),
+            css_classes: ['suggested-action'],
+        });
+        addHeaderButton.connect('clicked', () => {
+            const dialog = new AddRuleDialog(window, rulesList);
+            dialog.present();
+        });
+        rulesGroup.set_header_suffix(addHeaderButton);
+
+        const listBox = new Gtk.ListBox({
+            selection_mode: Gtk.SelectionMode.NONE,
+            css_classes: ['boxed-list'],
+        });
+        rulesGroup.add(listBox);
+
+        listBox.bind_model(rulesList, item => new RuleRow(item, rulesList));
+
+        page.add(rulesGroup);
         window.add(page);
     }
 }

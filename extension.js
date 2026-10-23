@@ -4,246 +4,263 @@ import GLib from 'gi://GLib';
 import Shell from 'gi://Shell';
 import Meta from 'gi://Meta';
 import Gio from 'gi://Gio';
-import { Extension } from 'resource:///org/gnome/shell/extensions/extension.js';
+import { Extension, gettext as _ } from 'resource:///org/gnome/shell/extensions/extension.js';
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 
 class WindowMover {
     constructor(settings) {
         this._settings = settings;
         this._appSystem = Shell.AppSystem.get_default();
+        this._windowTracker = Shell.WindowTracker.get_default();
         this._appConfigs = new Map();
-        this._appData = new Map();
         this._processedWindows = new WeakSet();
+        this._idleSources = new Set();
         this._timeouts = new Set();
 
-        this._appSystem.connectObject('installed-changed',
-            () => this._safeUpdateAppData(), this);
+        this._settings.connectObject('changed::application-list',
+            () => this._updateAppConfigs(), this);
 
-        this._settings.connectObject('changed',
-            this._safeUpdateAppConfigs.bind(this), this);
-        
-        this._safeUpdateAppConfigs();
-    }
+        this._updateAppConfigs();
 
-    _safeUpdateAppConfigs() {
-        try {
-            this._updateAppConfigs();
-        } catch (e) {
-            logError(e, '[AutoMove] Error updating configs');
-        }
-    }
-
-    _safeUpdateAppData() {
-        try {
-            this._updateAppData();
-        } catch (e) {
-            logError(e, '[AutoMove] Error updating app data');
-        }
+        // Listen for new window creations across the entire display
+        global.display.connectObject('window-created',
+            (display, window) => this._onWindowCreated(window), this);
     }
 
     _updateAppConfigs() {
         this._appConfigs.clear();
         const settingsList = this._settings.get_strv('application-list');
 
-        settingsList.forEach(v => {
-            if (!v || v.trim() === '') return;
-            const parts = v.split(':');
-            const appId = parts[0];
+        for (const entry of settingsList) {
+            if (!entry || !entry.trim()) continue;
+            const parts = entry.split(':');
+            const appId = parts[0]?.trim();
             if (appId) {
-                const bgString = parts[2];
-                const isBackground = (bgString === 'true');
-                this._appConfigs.set(appId, { background: isBackground });
+                const isBackground = parts[2] === 'true';
+                const autoMaximize = parts[3] === 'true';
+                this._appConfigs.set(appId, {
+                    background: isBackground,
+                    autoMaximize: autoMaximize,
+                });
             }
-        });
-        this._updateAppData();
+        }
     }
 
-    _updateAppData() {
-        const ids = [...this._appConfigs.keys()];
-        const removedApps = [...this._appData.keys()]
-            .filter(a => !ids.includes(a.id));
+    _findConfigForWindow(window, app) {
+        if (!window) return null;
 
-        removedApps.forEach(app => {
-            app.disconnectObject(this);
-            this._appData.delete(app);
-        });
+        // 1. Try Shell.App ID (e.g. org.gnome.Nautilus.desktop)
+        if (app) {
+            const appId = app.get_id();
+            if (appId && this._appConfigs.has(appId)) {
+                return this._appConfigs.get(appId);
+            }
+        }
 
-        const addedApps = ids
-            .map(id => this._appSystem.lookup_app(id))
-            .filter(app => app && !this._appData.has(app));
+        // 2. Try WM_CLASS
+        const wmClass = window.get_wm_class ? window.get_wm_class() : null;
+        if (wmClass && this._appConfigs.has(wmClass)) {
+            return this._appConfigs.get(wmClass);
+        }
 
-        addedApps.forEach(app => {
-            app.connectObject('windows-changed',
-                (a) => {
-                    try {
-                        this._appWindowsChanged(a);
-                    } catch (e) {
-                        logError(e, '[AutoMove] Error in windows-changed');
-                    }
-                }, this);
-            this._appData.set(app, { windows: app.get_windows() });
-        });
+        // 3. Try WM_CLASS instance
+        const wmInstance = window.get_wm_class_instance ? window.get_wm_class_instance() : null;
+        if (wmInstance && this._appConfigs.has(wmInstance)) {
+            return this._appConfigs.get(wmInstance);
+        }
+
+        // 4. Try GTK Application ID
+        const gtkAppId = window.get_gtk_application_id ? window.get_gtk_application_id() : null;
+        if (gtkAppId && this._appConfigs.has(gtkAppId)) {
+            return this._appConfigs.get(gtkAppId);
+        }
+
+        return null;
     }
 
-    destroy() {
-        this._timeouts.forEach(id => GLib.source_remove(id));
-        this._timeouts.clear();
+    _onWindowCreated(window) {
+        if (!this._settings || !window) return;
 
-        if (this._appSystem) {
-            this._appSystem.disconnectObject(this);
-            this._appSystem = null;
-        }
-        if (this._settings) {
-            this._settings.disconnectObject(this);
-            this._settings = null;
-        }
-        this._appConfigs.clear();
+        // Immediately skip non-normal windows (tooltips, menus, desktop, etc.)
+        if (window.get_window_type() !== Meta.WindowType.NORMAL) return;
 
-        for (const app of this._appData.keys()) {
-            app.disconnectObject(this);
-        }
-        this._appData.clear();
+        // Defer with idle priority so Mutter and Shell finish assigning initial properties
+        const idleId = GLib.idle_add(GLib.PRIORITY_DEFAULT_IDLE, () => {
+            this._idleSources.delete(idleId);
+            if (!this._settings) return GLib.SOURCE_REMOVE;
+            this._processWindow(window);
+            return GLib.SOURCE_REMOVE;
+        });
+        this._idleSources.add(idleId);
     }
 
-    _moveWindow(window, app) {
-        // CRITICAL CHECK: Se a extensão foi destruída, pare imediatamente.
-        if (!this._settings) return;
-
+    _processWindow(window) {
+        if (!this._settings || !window) return;
         if (this._processedWindows.has(window)) return;
+
+        // Verify window is still valid and has a compositor actor
+        try {
+            if (!window.get_compositor_private()) return;
+        } catch (e) {
+            return;
+        }
+
         this._processedWindows.add(window);
 
-        // Tratamento seguro de janelas filhas (Modais)
+        // Keep modal/dialog windows with their parent
         try {
             const parent = window.get_transient_for();
             if (parent) {
-                const parentWorkspace = parent.get_workspace();
-                if (window.get_workspace() !== parentWorkspace) {
-                    window.change_workspace(parentWorkspace);
-                    parentWorkspace.activate(global.get_current_time());
+                const parentWs = parent.get_workspace();
+                if (parentWs && window.get_workspace() !== parentWs) {
+                    window.change_workspace(parentWs);
+                    parentWs.activate(global.get_current_time());
                 }
                 return;
             }
         } catch (e) {
-            logError(e, '[AutoMove] Failed to handle modal window');
             return;
         }
 
-        if (window.skip_taskbar || window.is_on_all_workspaces()) return;
-        if (window.get_window_type() !== Meta.WindowType.NORMAL) return;
-        if (window.is_above()) return;
+        if (window.skip_taskbar || window.is_on_all_workspaces() || window.is_above()) {
+            return;
+        }
+        if (window.get_window_type() !== Meta.WindowType.NORMAL) {
+            return;
+        }
+
+        const app = this._windowTracker.get_window_app(window);
+        const config = this._findConfigForWindow(window, app);
+        if (!config) return;
 
         const currentWorkspace = window.get_workspace();
-        const hasSibling = app.get_windows().some(w =>
-            w !== window &&
-            w.get_workspace() === currentWorkspace &&
-            !w.skip_taskbar &&
-            !w.is_on_all_workspaces()
-        );
+        if (!currentWorkspace) return;
 
-        if (hasSibling) return;
-
-        const config = this._appConfigs.get(app.get_id());
-        const moveInBackground = config ? config.background : false;
-
-        // Cria o timer e salva o ID para poder cancelar se necessário
-        const timeoutId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 200, () => {
-            this._timeouts.delete(timeoutId); // Remove da lista de ativos
-            
-            // CRITICAL CHECK 2: Configurações ainda existem?
-            if (!this._settings) return GLib.SOURCE_REMOVE;
-
-            try {
-                if (!window.get_compositor_private() || window.get_transient_for()) {
-                    return GLib.SOURCE_REMOVE;
+        // Respect Mutter's workspaces-only-on-primary setting
+        try {
+            if (Meta.prefs_get_workspaces_only_on_primary && Meta.prefs_get_workspaces_only_on_primary()) {
+                if (window.is_on_primary_monitor && !window.is_on_primary_monitor()) {
+                    return;
                 }
-
-                const workspaceManager = global.workspace_manager;
-                const lastIndex = workspaceManager.n_workspaces - 1;
-                const lastWorkspace = workspaceManager.get_workspace_by_index(lastIndex);
-
-                const isLastEmpty = lastWorkspace.list_windows().every(w =>
-                    w.is_on_all_workspaces() || w === window || w.is_above()
-                );
-
-                let targetWorkspace;
-                if (isLastEmpty) {
-                    targetWorkspace = lastWorkspace;
-                } else {
-                    targetWorkspace = workspaceManager.append_new_workspace(false, 0);
-                }
-
-                if (window.get_workspace() !== targetWorkspace) {
-                    const workspaceDeOrigem = workspaceManager.get_active_workspace();
-                    
-                    window.change_workspace(targetWorkspace);
-
-                    const globalFocus = this._settings.get_boolean('focus-new-workspace');
-
-                    if (globalFocus && !moveInBackground) {
-                        Main.activateWindow(window);
-                    } else if (moveInBackground) {
-                        // Modo background seguro
-                        const bgTimer = GLib.timeout_add(GLib.PRIORITY_DEFAULT, 300, () => {
-                            this._timeouts.delete(bgTimer);
-                            if (this._settings && workspaceManager.get_active_workspace() !== workspaceDeOrigem) {
-                                workspaceDeOrigem.activate(global.get_current_time());
-                            }
-                            return GLib.SOURCE_REMOVE;
-                        });
-                        this._timeouts.add(bgTimer);
-                    }
-                }
-            } catch (err) {
-                logError(err, '[AutoMove] Error moving window');
             }
+        } catch (e) {
+            // Ignore if setting not present
+        }
 
-            return GLib.SOURCE_REMOVE;
-        });
+        // Sibling check: if the application already has a window on this workspace, don't move
+        if (app) {
+            const hasSibling = app.get_windows().some(w =>
+                w !== window &&
+                w.get_workspace() === currentWorkspace &&
+                !w.skip_taskbar &&
+                !w.is_on_all_workspaces()
+            );
+            if (hasSibling) return;
+        }
 
-        this._timeouts.add(timeoutId);
+        // If configured, keep on current workspace if it's already empty
+        const ignoreEmpty = this._settings.get_boolean('ignore-empty-workspace');
+        if (ignoreEmpty) {
+            const isCurrentEmpty = currentWorkspace.list_windows().every(w =>
+                w.is_on_all_workspaces() || w === window || w.is_above()
+            );
+            if (isCurrentEmpty) {
+                if (config.autoMaximize) {
+                    window.maximize(Meta.MaximizeFlags.BOTH);
+                }
+                return;
+            }
+        }
+
+        this._moveToNewWorkspace(window, config);
     }
 
-    _appWindowsChanged(app) {
-        const data = this._appData.get(app);
-        if (!data) return;
+    _moveToNewWorkspace(window, config) {
+        const workspaceManager = global.workspace_manager;
+        if (!workspaceManager) return;
 
-        const windows = app.get_windows();
-        const newWindows = windows.filter(w => !data.windows.includes(w) && w.get_compositor_private() !== null);
+        const currentWorkspace = window.get_workspace();
+        const originWorkspace = workspaceManager.get_active_workspace();
+        let targetWorkspace = null;
 
-        if (this._appConfigs.has(app.id)) {
-            newWindows.forEach(window => {
-                this._moveWindow(window, app);
-            });
+        const isDynamic = Meta.prefs_get_dynamic_workspaces ? Meta.prefs_get_dynamic_workspaces() : true;
+
+        if (isDynamic) {
+            const lastIndex = workspaceManager.n_workspaces - 1;
+            const lastWorkspace = workspaceManager.get_workspace_by_index(lastIndex);
+
+            const isLastEmpty = lastWorkspace.list_windows().every(w =>
+                w.is_on_all_workspaces() || w === window || w.is_above()
+            );
+
+            if (isLastEmpty && lastWorkspace !== currentWorkspace) {
+                targetWorkspace = lastWorkspace;
+            } else {
+                targetWorkspace = workspaceManager.append_new_workspace(false, global.display.get_current_time());
+            }
+        } else {
+            // Static workspaces: pick the first empty workspace
+            for (let i = 0; i < workspaceManager.n_workspaces; i++) {
+                const ws = workspaceManager.get_workspace_by_index(i);
+                if (ws !== currentWorkspace && ws.list_windows().every(w => w.is_on_all_workspaces() || w === window)) {
+                    targetWorkspace = ws;
+                    break;
+                }
+            }
+            if (!targetWorkspace) {
+                targetWorkspace = workspaceManager.get_workspace_by_index(workspaceManager.n_workspaces - 1);
+            }
         }
-        data.windows = windows;
+
+        if (!targetWorkspace || window.get_workspace() === targetWorkspace) return;
+
+        window.change_workspace(targetWorkspace);
+
+        if (config.autoMaximize) {
+            window.maximize(Meta.MaximizeFlags.BOTH);
+        }
+
+        const globalFocus = this._settings.get_boolean('focus-new-workspace');
+
+        if (globalFocus && !config.background) {
+            Main.activateWindow(window);
+        } else if (config.background) {
+            // Prevent workspace switch jitter by activating origin workspace immediately
+            if (workspaceManager.get_active_workspace() !== originWorkspace) {
+                originWorkspace.activate(global.get_current_time());
+            }
+        }
+    }
+
+    destroy() {
+        for (const id of this._idleSources) {
+            GLib.source_remove(id);
+        }
+        this._idleSources.clear();
+
+        for (const id of this._timeouts) {
+            GLib.source_remove(id);
+        }
+        this._timeouts.clear();
+
+        global.display.disconnectObject(this);
+
+        if (this._settings) {
+            this._settings.disconnectObject(this);
+            this._settings = null;
+        }
+
+        this._appConfigs.clear();
+        this._appSystem = null;
+        this._windowTracker = null;
     }
 }
 
 export default class AutoMoveExtension extends Extension {
-    _getSettingsSafe() {
-        try {
-            return this.getSettings();
-        } catch (e) {
-            const schemaId = this.metadata['settings-schema'];
-            const schemaSource = Gio.SettingsSchemaSource.new_from_directory(
-                this.path,
-                Gio.SettingsSchemaSource.get_default(),
-                false
-            );
-            const schema = schemaSource.lookup(schemaId, true);
-            if (!schema) {
-                log(`[AutoMove] Schema ${schemaId} not found`);
-                return null;
-            }
-            return new Gio.Settings({ settings_schema: schema });
-        }
-    }
-
     enable() {
-        const settings = this._getSettingsSafe();
-        if (settings) {
-            this._windowMover = new WindowMover(settings);
-        }
+        this.initTranslations();
+        this._settings = this.getSettings();
+        this._windowMover = new WindowMover(this._settings);
     }
 
     disable() {
@@ -251,5 +268,6 @@ export default class AutoMoveExtension extends Extension {
             this._windowMover.destroy();
             this._windowMover = null;
         }
+        this._settings = null;
     }
 }
